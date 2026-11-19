@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Editor</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --text-muted: #656d76;
+    --accent: #1f2328;
+    --accent-hover: #374151;
+    --selection: rgba(0,0,0,0.06);
+    --radius: 6px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+    --gutter-w: 48px;
+    --line-h: 1.7;
+    --font-size: 13.5px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; font-family: var(--font); background: var(--bg); color: var(--text); overflow: hidden; -webkit-font-smoothing: antialiased; }
+
+  /* ─── Toolbar ─── */
+  .toolbar {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    padding: 0 12px; height: 48px;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .toolbar select {
+    appearance: none; -webkit-appearance: none;
+    padding: 6px 30px 6px 10px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); font-size: 13px; font-weight: 500;
+    cursor: pointer; margin-right: 8px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23656d76' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+  }
+  .toolbar select:focus { outline: none; border-color: var(--text-muted); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: var(--radius);
+    border: none; background: transparent; color: var(--text-muted);
+    cursor: pointer; transition: background 0.1s, color 0.1s;
+  }
+  .btn:hover { background: var(--surface); color: var(--text); }
+  .btn:active { background: var(--border); }
+  .btn svg { width: 18px; height: 18px; }
+
+  .btn-primary {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 32px; padding: 0 14px; border-radius: var(--radius);
+    border: none; background: var(--accent); color: #fff;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    transition: background 0.1s;
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary svg { width: 13px; height: 13px; }
+
+  .toolbar .sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+  .toolbar .spacer { flex: 1; }
+
+  /* ─── Layout ─── */
+  .main { display: flex; height: calc(100% - 48px); }
+
+  .editor-pane {
+    display: flex; flex-direction: column; min-width: 0;
+    width: 50%; border-right: 1px solid var(--border);
+  }
+  .preview-pane {
+    display: flex; flex-direction: column; min-width: 0; flex: 1;
+    background: var(--surface);
+  }
+
+  /* ─── Splitter (visible + touch-friendly) ─── */
+  .splitter {
+    width: 12px; background: var(--bg); cursor: col-resize; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+  .splitter:hover, .splitter.dragging { background: var(--surface); }
+  .splitter .handle {
+    width: 3px; height: 28px; border-radius: 2px;
+    background: var(--border); transition: background 0.15s;
+  }
+  .splitter:hover .handle, .splitter.dragging .handle { background: var(--text-muted); }
+
+  /* ─── Tabs ─── */
+  .tabs { display: none; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .tabs.active { display: flex; }
+  .tabs button {
+    padding: 10px 16px; border: none; background: transparent;
+    color: var(--text-muted); font-size: 12px; font-weight: 500;
+    cursor: pointer; border-bottom: 2px solid transparent;
+    min-height: 36px; letter-spacing: 0.01em;
+  }
+  .tabs button.active { color: var(--text); border-bottom-color: var(--text); }
+  .tabs button:hover { color: var(--text); }
+
+  /* ─── Editor ─── */
+  .editor-wrap { flex: 1; position: relative; overflow: hidden; display: flex; }
+
+  .line-numbers {
+    width: var(--gutter-w); flex-shrink: 0;
+    padding: 16px 8px 16px 0;
+    font-family: var(--mono); font-size: var(--font-size); line-height: var(--line-h);
+    text-align: right; color: #94a3b8; background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow: hidden; user-select: none;
+  }
+
+  .editor-content { flex: 1; position: relative; overflow: hidden; }
+
+  .editor-content pre, .editor-content textarea {
+    position: absolute; inset: 0;
+    padding: 16px 18px; margin: 0;
+    font-family: var(--mono); font-size: var(--font-size); line-height: var(--line-h);
+    tab-size: 2; white-space: pre-wrap; word-wrap: break-word;
+    overflow: auto;
+  }
+
+  .editor-content pre {
+    z-index: 0; pointer-events: none; color: var(--text); background: transparent;
+  }
+  .editor-content pre code { font: inherit; }
+
+  .editor-content textarea {
+    z-index: 1; color: transparent; caret-color: var(--text);
+    background: transparent; border: none; outline: none; resize: none;
+    -webkit-text-fill-color: transparent;
+  }
+  .editor-content textarea::selection { background: var(--selection); }
+
+  /* ─── Syntax colors ─── */
+  .token.tag { color: #116329; }
+  .token.attr-name { color: #8250df; }
+  .token.attr-value, .token.string, .token.char { color: #0a3069; }
+  .token.comment, .token.prolog, .token.doctype { color: #6e7781; font-style: italic; }
+  .token.punctuation { color: #57606a; }
+  .token.keyword, .token.atrule { color: #cf222e; }
+  .token.number, .token.boolean { color: #0550ae; }
+  .token.function, .token.class-name { color: #6639ba; }
+  .token.operator { color: #57606a; }
+  .token.property { color: #0550ae; }
+  .token.selector { color: #116329; }
+  .token.builtin { color: #0550ae; }
+  .token.regex { color: #0a3069; }
+  .token.variable { color: #953800; }
+
+  /* ─── Preview ─── */
+  .preview-header {
+    padding: 0 12px; height: 36px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .preview-header span { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .preview-header .actions { display: flex; gap: 2px; }
+  .preview-header .btn { width: 28px; height: 28px; }
+  .preview-header .btn svg { width: 15px; height: 15px; }
+  #previewFrame { flex: 1; border: none; background: #fff; }
+
+  /* ─── States ─── */
+  .preview-pane.fullscreen { position: fixed; inset: 0; z-index: 200; width: 100% !important; background: #fff; }
+  .preview-pane.collapsed, .editor-pane.collapsed { display: none; }
+  .splitter.hidden { display: none; }
+  .editor-pane.fullscreen { flex: 1; width: 100% !important; }
+
+  /* ─── Mobile ─── */
+  @media (max-width: 768px) {
+    .main { flex-direction: column; }
+    .editor-pane { width: 100% !important; height: 50%; border-right: none; border-bottom: 1px solid var(--border); }
+    .splitter {
+      width: 100%; height: 16px; cursor: row-resize;
+      border-left: none; border-right: none;
+      border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    }
+    .splitter .handle { width: 28px; height: 3px; }
+    .toolbar { height: 44px; padding: 0 8px; }
+    :root { --font-size: 14px; --gutter-w: 36px; }
+  }
+
+  /* ─── Diff Modal ─── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 500;
+    background: rgba(0,0,0,0.4); backdrop-filter: blur(2px);
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    width: 92vw; max-width: 1100px; height: 85vh;
+    background: var(--bg); border-radius: 8px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+  }
+  .modal-header h2 { font-size: 15px; font-weight: 600; }
+  .modal-header .btn { width: 28px; height: 28px; }
+  .modal-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .diff-inputs { display: flex; gap: 0; border-bottom: 1px solid var(--border); }
+  .diff-inputs .diff-col { flex: 1; display: flex; flex-direction: column; }
+  .diff-inputs .diff-col:first-child { border-right: 1px solid var(--border); }
+  .diff-inputs label {
+    padding: 8px 14px; font-size: 11px; font-weight: 600;
+    color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .diff-inputs textarea {
+    flex: 1; border: none; outline: none; resize: none;
+    padding: 12px 14px; font-family: var(--mono); font-size: 12.5px;
+    line-height: 1.6; color: var(--text); background: var(--bg);
+  }
+  .diff-actions {
+    padding: 10px 16px; display: flex; gap: 8px; align-items: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .diff-actions .btn-primary { height: 30px; font-size: 12px; }
+  .diff-result { flex: 1; overflow: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+  .diff-result table { width: 100%; border-collapse: collapse; }
+  .diff-result td { padding: 0 12px; white-space: pre-wrap; word-break: break-all; vertical-align: top; }
+  .diff-result .ln { width: 40px; text-align: right; color: #94a3b8; user-select: none; border-right: 1px solid var(--border); padding-right: 8px; }
+  .diff-result .sign { width: 20px; text-align: center; user-select: none; font-weight: 600; }
+  .diff-row-add { background: #dafbe1; }
+  .diff-row-add .sign { color: #1a7f37; }
+  .diff-row-del { background: #ffebe9; }
+  .diff-row-del .sign { color: #cf222e; }
+  .diff-row-eq .sign { color: transparent; }
+  .diff-empty { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+  @media (max-width: 768px) {
+    .diff-inputs { flex-direction: column; }
+    .diff-inputs .diff-col:first-child { border-right: none; border-bottom: 1px solid var(--border); }
+    .modal { width: 96vw; height: 92vh; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <select id="modeSelect">
+    <option value="single">Un archivo</option>
+    <option value="multi">Multi-archivo</option>
+  </select>
+
+  <button id="runBtn" class="btn-primary">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+    Ejecutar
+  </button>
+
+  <div class="sep"></div>
+
+  <button class="btn" id="selAllBtn" title="Seleccionar todo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
+  </button>
+  <button class="btn" id="copyBtn" title="Copiar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+  </button>
+  <button class="btn" id="pasteBtn" title="Pegar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+  </button>
+
+  <div class="sep"></div>
+
+  <button class="btn" id="maxEditorBtn" title="Maximizar editor">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+  </button>
+  <button class="btn" id="diffBtn" title="Comparar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 012 2v7"/><path d="M11 18H8a2 2 0 01-2-2V9"/></svg>
+  </button>
+
+  <div class="spacer"></div>
+
+  <button class="btn" id="togglePreviewBtn" title="Vista previa">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+  </button>
+  <button class="btn" id="resetBtn" title="Reiniciar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 019-9 9.75 9.75 0 016.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+  </button>
+</div>
+
+<div class="main" id="mainArea">
+  <div class="editor-pane" id="editorPane">
+    <div class="tabs" id="tabsBar">
+      <button data-file="html" class="active">index.html</button>
+      <button data-file="css">styles.css</button>
+      <button data-file="js">script.js</button>
+    </div>
+    <div class="editor-wrap">
+      <div class="line-numbers" id="lineNumbers"></div>
+      <div class="editor-content">
+        <pre aria-hidden="true"><code id="highlightCode"></code></pre>
+        <textarea id="codeInput" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="splitter" id="splitter"><div class="handle"></div></div>
+
+  <div class="preview-pane" id="previewPane">
+    <div class="preview-header">
+      <span>Vista previa</span>
+      <div class="actions">
+        <button class="btn" id="fullscreenBtn" title="Expander">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+        </button>
+        <button class="btn" id="closePreviewBtn" title="Cerrar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+    <iframe id="previewFrame" sandbox="allow-scripts allow-modals"></iframe>
+  </div>
+</div>
+
+<!-- Diff Modal -->
+<div class="modal-overlay" id="diffModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Comparar</h2>
+      <button class="btn" id="diffCloseBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="diff-inputs">
+        <div class="diff-col">
+          <label>Original</label>
+          <textarea id="diffLeft" spellcheck="false"></textarea>
+        </div>
+        <div class="diff-col">
+          <label>Modificado</label>
+          <textarea id="diffRight" spellcheck="false"></textarea>
+        </div>
+      </div>
+      <div class="diff-actions">
+        <button class="btn-primary" id="diffRunBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 012 2v7"/><path d="M11 18H8a2 2 0 01-2-2V9"/></svg>
+          Comparar
+        </button>
+        <span id="diffStats" style="font-size:12px;color:var(--text-muted)"></span>
+      </div>
+      <div class="diff-result" id="diffResult">
+        <div class="diff-empty">Pulsa «Comparar» para ver las diferencias</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-markup.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-css.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+<script>
+(() => {
+  let mode = 'single';
+  let activeFile = 'html';
+  let snapshot = '';
+
+  const DEFAULTS = {
+    html: `<!DOCTYPE html>
+<html>
+<head><title>Demo</title></head>
+<body>
+  <h1>Hola Mundo</h1>
+  <p>Edita y pulsa Ejecutar.</p>
+  <button onclick="alert('Funciona')">Probar</button>
+</body>
+</html>`,
+    css: `body { font-family: sans-serif; padding: 2rem; }
+h1 { font-size: 2rem; }
+button { padding: 8px 16px; }`,
+    js: `console.log('OK');`
+  };
+
+  const fileValues = { ...DEFAULTS };
+  const langMap = { html: 'markup', css: 'css', js: 'javascript' };
+
+  const textarea = document.getElementById('codeInput');
+  const highlightCode = document.getElementById('highlightCode');
+  const lineNumbers = document.getElementById('lineNumbers');
+  const previewPane = document.getElementById('previewPane');
+  const editorPane = document.getElementById('editorPane');
+  const splitter = document.getElementById('splitter');
+  const frame = document.getElementById('previewFrame');
+
+  // ─── Render ───
+  let renderTimer = null;
+  function render() {
+    clearTimeout(renderTimer);
+    renderTimer = requestAnimationFrame(() => {
+      const code = textarea.value;
+      const lang = langMap[activeFile] || 'markup';
+      highlightCode.innerHTML = Prism.highlight(code, Prism.languages[lang], lang);
+      if (code.endsWith('\n')) highlightCode.innerHTML += '\n';
+      const lines = code.split('\n');
+      lineNumbers.innerHTML = lines.map((_, i) => i + 1).join('<br>');
+      const pre = highlightCode.parentElement;
+      pre.scrollTop = textarea.scrollTop;
+      pre.scrollLeft = textarea.scrollLeft;
+      lineNumbers.scrollTop = textarea.scrollTop;
+    });
+  }
+
+  function switchTab(file) {
+    fileValues[activeFile] = textarea.value;
+    activeFile = file;
+    textarea.value = fileValues[file];
+    render();
+    document.querySelectorAll('#tabsBar button').forEach(b =>
+      b.classList.toggle('active', b.dataset.file === file)
+    );
+  }
+
+  function run() {
+    fileValues[activeFile] = textarea.value;
+    let doc;
+    if (mode === 'single') {
+      doc = textarea.value;
+    } else {
+      let out = fileValues.html;
+      if (fileValues.css) {
+        const s = `<style>${fileValues.css}</style>`;
+        out = /<\/head>/i.test(out) ? out.replace(/<\/head>/i, s + '\n</head>') : s + out;
+      }
+      if (fileValues.js) {
+        const sc = `<script>${fileValues.js}<\/script>`;
+        out = /<\/body>/i.test(out) ? out.replace(/<\/body>/i, sc + '\n</body>') : out + sc;
+      }
+      doc = out;
+    }
+    frame.srcdoc = doc;
+  }
+
+  // ─── Diff ───
+  function diffLines(a, b) {
+    const A = a.split('\n'), B = b.split('\n');
+    const m = A.length, n = B.length;
+    if (m * n > 5_000_000) {
+      const result = [];
+      let i = 0, j = 0;
+      while (i < m || j < n) {
+        if (i >= m) result.push({ type: 'add', text: B[j++] });
+        else if (j >= n) result.push({ type: 'del', text: A[i++] });
+        else if (A[i] === B[j]) { result.push({ type: 'eq', text: A[i] }); i++; j++; }
+        else { result.push({ type: 'del', text: A[i++] }); result.push({ type: 'add', text: B[j++] }); }
+      }
+      return result;
+    }
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 1; i <= m; i++)
+      for (let j = 1; j <= n; j++)
+        dp[i][j] = A[i-1] === B[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+    const result = [];
+    let i = m, j = n;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && A[i-1] === B[j-1]) { result.unshift({ type: 'eq', text: A[i-1] }); i--; j--; }
+      else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) { result.unshift({ type: 'add', text: B[j-1] }); j--; }
+      else { result.unshift({ type: 'del', text: A[i-1] }); i--; }
+    }
+    return result;
+  }
+
+  function renderDiff() {
+    const left = document.getElementById('diffLeft').value;
+    const right = document.getElementById('diffRight').value;
+    const ops = diffLines(left, right);
+    const container = document.getElementById('diffResult');
+    const stats = document.getElementById('diffStats');
+    let adds = 0, dels = 0, html = '<table>', lnL = 0, lnR = 0;
+    for (const op of ops) {
+      if (op.type === 'eq') { lnL++; lnR++; }
+      else if (op.type === 'del') { lnL++; dels++; }
+      else { lnR++; adds++; }
+      const cls = op.type === 'eq' ? 'diff-row-eq' : op.type === 'add' ? 'diff-row-add' : 'diff-row-del';
+      const sign = op.type === 'eq' ? ' ' : op.type === 'add' ? '+' : '-';
+      const lNum = op.type === 'add' ? '' : lnL;
+      const escaped = op.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      html += `<tr class="${cls}"><td class="ln">${lNum}</td><td class="sign">${sign}</td><td>${escaped}</td></tr>`;
+    }
+    html += '</table>';
+    container.innerHTML = html;
+    stats.textContent = `+${adds}  −${dels}`;
+  }
+
+  // ─── Toolbar ───
+  document.getElementById('selAllBtn').onclick = () => { textarea.focus(); textarea.select(); };
+
+  document.getElementById('copyBtn').onclick = async () => {
+    const sel = textarea.selectionEnd > textarea.selectionStart
+      ? textarea.value.slice(textarea.selectionStart, textarea.selectionEnd)
+      : textarea.value;
+    try { await navigator.clipboard.writeText(sel); }
+    catch { textarea.select(); document.execCommand('copy'); }
+  };
+
+  document.getElementById('pasteBtn').onclick = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      textarea.setRangeText(text, textarea.selectionStart, textarea.selectionEnd, 'end');
+      textarea.dispatchEvent(new Event('input'));
+    } catch { textarea.focus(); }
+  };
+
+  // Maximizar editor (oculta preview + splitter)
+  let editorMaximized = false;
+  document.getElementById('maxEditorBtn').onclick = () => {
+    editorMaximized = !editorMaximized;
+    previewPane.classList.toggle('collapsed', editorMaximized);
+    splitter.classList.toggle('hidden', editorMaximized);
+    if (editorMaximized) {
+      editorPane.classList.add('fullscreen');
+    } else {
+      editorPane.classList.remove('fullscreen');
+      editorPane.style.width = '';
+      editorPane.style.height = '';
+    }
+  };
+
+  document.getElementById('togglePreviewBtn').onclick = () => {
+    previewPane.classList.toggle('collapsed');
+    splitter.classList.toggle('hidden');
+    editorPane.classList.toggle('fullscreen', previewPane.classList.contains('collapsed'));
+  };
+
+  document.getElementById('closePreviewBtn').onclick = () => {
+    previewPane.classList.add('collapsed');
+    splitter.classList.add('hidden');
+    editorPane.classList.add('fullscreen');
+    editorMaximized = true;
+  };
+
+  document.getElementById('fullscreenBtn').onclick = () => {
+    previewPane.classList.toggle('fullscreen');
+  };
+
+  document.getElementById('runBtn').onclick = run;
+
+  document.getElementById('resetBtn').onclick = () => {
+    Object.assign(fileValues, DEFAULTS);
+    textarea.value = fileValues[activeFile];
+    render();
+  };
+
+  document.getElementById('modeSelect').onchange = e => {
+    mode = e.target.value;
+    document.getElementById('tabsBar').classList.toggle('active', mode === 'multi');
+    if (mode === 'single') { activeFile = 'html'; textarea.value = fileValues.html; }
+    else switchTab('html');
+    render();
+  };
+
+  document.querySelectorAll('#tabsBar button').forEach(btn => {
+    btn.onclick = () => switchTab(btn.dataset.file);
+  });
+
+  // ─── Diff modal ───
+  const diffModal = document.getElementById('diffModal');
+  document.getElementById('diffBtn').onclick = () => {
+    document.getElementById('diffLeft').value = snapshot || fileValues[activeFile];
+    document.getElementById('diffRight').value = textarea.value;
+    diffModal.classList.add('open');
+  };
+  document.getElementById('diffCloseBtn').onclick = () => diffModal.classList.remove('open');
+  diffModal.addEventListener('click', e => { if (e.target === diffModal) diffModal.classList.remove('open'); });
+  document.getElementById('diffRunBtn').onclick = renderDiff;
+  if (!snapshot) snapshot = fileValues.html;
+
+  // ─── Splitter (12px, fácil de agarrar) ───
+  let dragging = false;
+  splitter.addEventListener('pointerdown', e => {
+    dragging = true;
+    splitter.classList.add('dragging');
+    splitter.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  splitter.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const rect = document.getElementById('mainArea').getBoundingClientRect();
+    const mobile = window.innerWidth <= 768;
+    if (mobile) {
+      const pct = Math.max(20, Math.min(80, ((e.clientY - rect.top) / rect.height) * 100));
+      editorPane.style.height = pct + '%';
+    } else {
+      const pct = Math.max(20, Math.min(80, ((e.clientX - rect.left) / rect.width) * 100));
+      editorPane.style.width = pct + '%';
+    }
+  });
+  splitter.addEventListener('pointerup', () => {
+    dragging = false;
+    splitter.classList.remove('dragging');
+  });
+
+  // ─── Editor events ───
+  textarea.addEventListener('input', render);
+  textarea.addEventListener('scroll', () => {
+    const pre = highlightCode.parentElement;
+    pre.scrollTop = textarea.scrollTop;
+    pre.scrollLeft = textarea.scrollLeft;
+    lineNumbers.scrollTop = textarea.scrollTop;
+  });
+
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') run();
+    if (e.key === 'Escape') diffModal.classList.remove('open');
+  });
+
+  // ─── Init ───
+  textarea.value = fileValues.html;
+  render();
+})();
+</script>
+</body>
+</html>
